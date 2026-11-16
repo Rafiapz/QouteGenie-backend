@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from "express";
-import { DomainError, NotFoundError, ValidationError, ConflictError } from "../../domain/errors/domain.error";
+import {
+  DomainError,
+  NotFoundError,
+  ValidationError,
+  ConflictError,
+  UnauthorizedError,
+} from "../../domain/errors/domain.error";
 import { ZodError } from "zod";
+import { Prisma } from "@prisma/client";
 import { env } from "../../infrastructure/config/env.config";
 
 export function errorHandler(
@@ -49,7 +56,34 @@ export function errorHandler(
     return;
   }
 
-  // 5. Generic Domain Error
+  // 5. Domain Unauthorized Error
+  if (err instanceof UnauthorizedError) {
+    res.status(401).json({
+      success: false,
+      error: err.message,
+    });
+    return;
+  }
+
+  // 6. Prisma Database Constraint Errors
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === "P2002") {
+      res.status(409).json({
+        success: false,
+        error: "An organization with this email address already exists.",
+      });
+      return;
+    }
+    if (err.code === "P2025") {
+      res.status(404).json({
+        success: false,
+        error: "Requested record was not found in the database.",
+      });
+      return;
+    }
+  }
+
+  // 7. Generic Domain Error
   if (err instanceof DomainError) {
     res.status(400).json({
       success: false,

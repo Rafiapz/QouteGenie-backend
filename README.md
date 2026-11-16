@@ -1,6 +1,6 @@
 # QuoteGenie Backend API
 
-A clean, minimalist Express.js backend starter built with TypeScript, Prisma ORM, and PostgreSQL, organized according to **Clean Architecture** principles.
+A clean, minimalist Express.js backend built with TypeScript, Prisma ORM, and PostgreSQL, organized according to **Clean Architecture** principles.
 
 ---
 
@@ -9,26 +9,29 @@ A clean, minimalist Express.js backend starter built with TypeScript, Prisma ORM
 ```
 backend/
 ├── prisma/
-│   └── schema.prisma                 # PostgreSQL schema with Prisma ORM
+│   ├── schema.prisma                 # PostgreSQL schema with Prisma ORM
+│   └── migrations/                   # SQL migrations for PostgreSQL
 ├── src/
 │   ├── domain/                       # Core enterprise business rules
-│   │   ├── entities/                 # Business models & entities
-│   │   ├── repositories/             # Repository interfaces (contracts)
+│   │   ├── entities/                 # Business models (OrganizationEntity)
+│   │   ├── repositories/             # Repository interfaces (IOrganizationRepository)
 │   │   └── errors/                   # Domain-level error definitions
 │   │
 │   ├── application/                  # Application business rules
-│   │   ├── dtos/                     # Data transfer objects
-│   │   └── use-cases/                # Business use cases
+│   │   ├── dtos/                     # Data transfer objects & Zod validation
+│   │   ├── ports/                    # Port interfaces (IPasswordHasher)
+│   │   └── use-cases/                # Business use cases (RegisterOrganizationUseCase)
 │   │
 │   ├── infrastructure/               # Frameworks, database & external services
 │   │   ├── config/                   # Validated environment configuration (env.config.ts)
 │   │   ├── database/                 # Prisma client instance & DB lifecycle (prisma.client.ts)
+│   │   ├── security/                 # Bcrypt password hasher implementation
 │   │   └── repositories/             # Prisma implementations of domain repositories
 │   │
 │   ├── presentation/                 # Interface adapters (HTTP / Express)
-│   │   ├── controllers/              # Request handlers (e.g. HealthController)
-│   │   ├── routes/                   # Route definitions (health.routes.ts, index.ts)
-│   │   └── middlewares/              # Error handling & 404 middlewares
+│   │   ├── controllers/              # Request handlers (OrganizationController, HealthController)
+│   │   ├── routes/                   # Route definitions (organization.routes.ts, health.routes.ts)
+│   │   └── middlewares/              # Error handling, 404 & validation middlewares
 │   │
 │   ├── app.ts                        # Express app configuration (CORS, Helmet, JSON parser)
 │   └── server.ts                     # Server bootstrap & graceful shutdown hooks
@@ -71,6 +74,47 @@ npm run prisma:generate
 npm run prisma:migrate
 ```
 
-### 3. API Base URL
-- Base API: `http://localhost:5000/api/v1`
-- Health check: `http://localhost:5000/api/v1/health`
+---
+
+## 📡 API Endpoints (`/api/v1`)
+
+### Health Check
+- `GET /api/v1/health` – Returns service status and PostgreSQL connectivity.
+
+### Organizations
+
+#### Register Organization
+- **Endpoint**: `POST /api/v1/organizations/register`
+- **Headers**: `Content-Type: application/json`
+- **Request Body**:
+  ```json
+  {
+    "email": "contact@acmecorp.com",
+    "companyName": "Acme Corporation",
+    "password": "SecurePassword123!",
+    "plan": 1
+  }
+  ```
+- **Validation**:
+  - `email`: Valid email format (unique)
+  - `companyName`: Required string (1-255 chars)
+  - `password`: Required string (min 8 chars, hashed with bcrypt before saving)
+  - `plan`: Optional integer (defaults to 1)
+- **Success Response (`201 Created`)**:
+  ```json
+  {
+    "success": true,
+    "message": "Organization registered successfully.",
+    "data": {
+      "id": "c1f7b7cb-9252-4752-9b2f-3d6d5ef66699",
+      "email": "contact@acmecorp.com",
+      "companyName": "Acme Corporation",
+      "plan": 1,
+      "createdAt": "2026-11-14T14:00:00.000Z",
+      "updatedAt": "2026-11-14T14:00:00.000Z"
+    }
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: Validation failure (e.g. invalid email or password < 8 characters).
+  - `409 Conflict`: If an organization with the same email already exists.

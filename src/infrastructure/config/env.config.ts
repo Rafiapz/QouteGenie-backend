@@ -8,6 +8,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
+  JWT_SECRET: z.string().default("quotegenie_jwt_super_secret_key_2026_dev_env"),
+  JWT_EXPIRES_IN: z.string().default("1d"),
 });
 
 const parseEnv = () => {

@@ -1,6 +1,7 @@
 import express, { Application } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import { env } from "./infrastructure/config/env.config";
 import { apiRoutes } from "./presentation/routes";
 import { errorHandler } from "./presentation/middlewares/error.middleware";
@@ -17,6 +18,7 @@ export function createApp(): Application {
       credentials: true,
     })
   );
+  app.use(cookieParser());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 

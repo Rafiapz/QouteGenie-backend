@@ -25,3 +25,10 @@ export class ConflictError extends DomainError {
     this.name = "ConflictError";
   }
 }
+
+export class UnauthorizedError extends DomainError {
+  constructor(message: string = "Invalid email or password.") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}

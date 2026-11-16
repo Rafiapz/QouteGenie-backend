@@ -7,12 +7,86 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Organization {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String          @unique @db.VarChar(255)
+  companyName   String          @map("company_name") @db.VarChar(255)
+  plan          Int             @default(1)
+  password      String          @db.VarChar(255)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  suppliers     Supplier[]
+  quotes        SupplierQuote[]
+  uploadedFiles UploadedFile[]
 
-  @@map("users")
+  @@map("organizations")
+}
+
+model Supplier {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String          @db.VarChar(255)
+  email          String?         @db.VarChar(255)
+  phone          String?         @db.VarChar(50)
+  address        String?         @db.Text
+  organizationId String          @map("organization_id") @db.Uuid
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotes         SupplierQuote[]
+
+  @@map("suppliers")
+}
+
+model SupplierQuote {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplierId       String         @map("supplier_id") @db.Uuid
+  supplier         Supplier       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  quoteNumber      String         @map("quote_number") @db.VarChar(100)
+  quoteDate        DateTime       @map("quote_date") @db.Date
+  validUntil       DateTime?      @map("valid_until") @db.Date
+  status           Int            @default(0) // maps to status_enum.code (0: Draft, 1: Verified, 2: Accepted, 3: Rejected)
+  currency         String         @default("INR") @db.VarChar(3)
+  deliveryLeadTime String?        @map("delivery_lead_time") @db.VarChar(100)
+  paymentTerms     String?        @map("payment_terms") @db.VarChar(100)
+  totalAmount      Decimal?       @map("total_amount") @db.Decimal(14, 2)
+  taxAmount        Decimal?       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  notes            String?        @db.Text
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  quoteLines       QuoteLine[]
+  uploadedFiles    UploadedFile[]
+
+  @@unique([organizationId, quoteNumber])
+  @@map("supplier_quotes")
+}
+
+model QuoteLine {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quoteId     String        @map("quote_id") @db.Uuid
+  quote       SupplierQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  partNumber  String        @map("part_number") @db.VarChar(100)
+  description String?       @db.Text
+  quantity    Int
+  unit        String?       @default("units") @db.VarChar(20)
+  price       Decimal       @db.Decimal(14, 2)
+  totalPrice  Decimal?      @map("total_price") @db.Decimal(14, 2)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("quote_lines")
+}
+
+model UploadedFile {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quoteId          String?        @map("quote_id") @db.Uuid
+  quote            SupplierQuote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  originalFileName String         @map("original_file_name") @db.VarChar(255)
+  mimeType         String         @map("mime_type") @db.VarChar(100)
+  filePath         String?        @map("file_path") @db.VarChar(500)
+  fileSize         Int?           @map("file_size")
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("uploaded_files")
 }

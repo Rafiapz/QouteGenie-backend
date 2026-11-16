@@ -7,6 +7,7 @@ import { LoginOrganizationUseCase } from "../../application/use-cases/organizati
 import { OrganizationController } from "../controllers/organization.controller";
 import { validateRequest } from "../middlewares/validate.middleware";
 import { authenticate } from "../middlewares/auth.middleware";
+import { authRateLimiter } from "../middlewares/rate-limit.middleware";
 import { RegisterOrganizationSchema } from "../../application/dtos/register-organization.dto";
 import { LoginOrganizationSchema } from "../../application/dtos/login-organization.dto";
 
@@ -33,16 +34,18 @@ const organizationController = new OrganizationController(
   loginOrganizationUseCase
 );
 
-// POST /api/v1/organizations/register
+// POST /api/v1/organizations/register (Protected with authRateLimiter: 10 attempts / 15 min)
 router.post(
   "/register",
+  authRateLimiter,
   validateRequest({ body: RegisterOrganizationSchema }),
   organizationController.register
 );
 
-// POST /api/v1/organizations/login
+// POST /api/v1/organizations/login (Protected with authRateLimiter: 10 attempts / 15 min)
 router.post(
   "/login",
+  authRateLimiter,
   validateRequest({ body: LoginOrganizationSchema }),
   organizationController.login
 );

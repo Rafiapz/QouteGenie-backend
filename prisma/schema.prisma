@@ -18,6 +18,7 @@ model Organization {
   suppliers     Supplier[]
   quotes        SupplierQuote[]
   uploadedFiles UploadedFile[]
+  comparisons   QuoteComparison[]
 
   @@map("organizations")
 }
@@ -89,4 +90,17 @@ model UploadedFile {
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("uploaded_files")
+}
+
+model QuoteComparison {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String       @db.VarChar(255)
+  description    String?      @db.Text
+  quoteIds       String[]     @map("quote_ids") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("quote_comparisons")
 }

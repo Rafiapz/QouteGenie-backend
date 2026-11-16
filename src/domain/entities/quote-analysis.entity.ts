@@ -25,6 +25,11 @@ export interface SupplierScorecard {
   riskScore: number; // 0 - 100 (100 = lowest risk)
   strengths: string[];
   weaknesses: string[];
+  missingItems?: string[];
+  missingItemsCount?: number;
+  totalScopeItemsCount?: number;
+  itemCoveragePercent?: number;
+  scopePenalized?: boolean;
 }
 
 export interface SplitSourcingAllocation {

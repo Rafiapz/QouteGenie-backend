@@ -8,6 +8,7 @@ import { QuoteAiAnalyzerService } from "../../infrastructure/services/quote-ai-a
 import { authenticate } from "../middlewares/auth.middleware";
 import { uploadQuotePdf } from "../middlewares/upload.middleware";
 import { validateRequest } from "../middlewares/validate.middleware";
+import { aiAnalysisRateLimiter } from "../middlewares/rate-limit.middleware";
 import { SaveQuoteSchema } from "../../application/dtos/quote.dto";
 
 const router = Router();
@@ -28,11 +29,11 @@ const quoteController = new QuoteController(quoteUseCase);
 // All quote routes require authentication
 router.use(authenticate);
 
-// POST /api/v1/quotes/extract - Upload and extract quote PDF
-router.post("/extract", uploadQuotePdf.single("file"), quoteController.extract);
+// POST /api/v1/quotes/extract - Upload and extract quote PDF (Rate limited: 20 req / min)
+router.post("/extract", aiAnalysisRateLimiter, uploadQuotePdf.single("file"), quoteController.extract);
 
-// POST /api/v1/quotes/analyze - Intelligent AI Quotation Analysis & Strategic Sourcing
-router.post("/analyze", quoteController.analyze);
+// POST /api/v1/quotes/analyze - Intelligent AI Quotation Analysis & Strategic Sourcing (Rate limited: 20 req / min)
+router.post("/analyze", aiAnalysisRateLimiter, quoteController.analyze);
 
 // POST /api/v1/quotes - Save verified quotation
 router.post("/", validateRequest({ body: SaveQuoteSchema }), quoteController.save);

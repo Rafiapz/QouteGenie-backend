@@ -68,6 +68,11 @@ export class QuoteAiAnalyzerService {
       }
     } else {
       console.log(`Bypassing cache for fresh AI quotation analysis [${cacheKey}]`);
+      try {
+        await redisClient.del(cacheKey);
+      } catch (delErr) {
+        console.warn("Failed to delete stale cache on forceRefresh:", delErr);
+      }
     }
 
     let result: IntelligentAnalysisResult | null = null;
@@ -99,8 +104,19 @@ export class QuoteAiAnalyzerService {
     return result;
   }
 
+  async invalidateQuotesAnalysis(
+    quotes: SupplierQuoteEntity[],
+    organizationId: string = "default"
+  ): Promise<void> {
+    const cacheKey = this.computeCacheKey(organizationId, quotes);
+    await redisClient.del(cacheKey);
+    console.log(`🗑️ Removed quotation analysis from Redis cache [${cacheKey}]`);
+  }
+
   private async runAiAnalysis(quotes: SupplierQuoteEntity[]): Promise<IntelligentAnalysisResult | null> {
     if (!this.openai) return null;
+
+    const { totalScopeItems, quoteMissingMap } = extractCrossQuoteItemScope(quotes);
 
     const candidateModels = Array.from(
       new Set(
@@ -114,33 +130,53 @@ export class QuoteAiAnalyzerService {
       )
     );
 
-    const quotesSummary = quotes.map((q) => ({
-      quoteId: q.id,
-      quoteNumber: q.quoteNumber,
-      supplierName: q.supplier?.name || "Supplier",
-      quoteDate: q.quoteDate,
-      validUntil: q.validUntil,
-      currency: q.currency,
-      leadTime: q.deliveryLeadTime,
-      paymentTerms: q.paymentTerms,
-      subtotal: q.totalAmount ? Number(q.totalAmount) - Number(q.taxAmount || 0) : 0,
-      taxAmount: Number(q.taxAmount || 0),
-      totalAmount: Number(q.totalAmount || 0),
-      notes: q.notes,
-      items: (q.quoteLines || []).map((l) => ({
-        partNumber: l.partNumber,
-        description: l.description,
-        quantity: l.quantity,
-        unit: l.unit,
-        price: Number(l.price),
-        totalPrice: Number(l.totalPrice || l.quantity * Number(l.price)),
-      })),
-    }));
+    const quotesSummary = quotes.map((q) => {
+      const missingItems = quoteMissingMap.get(q.id) || [];
+      const quotedCount = (q.quoteLines || []).length;
+      return {
+        quoteId: q.id,
+        quoteNumber: q.quoteNumber,
+        supplierName: q.supplier?.name || "Supplier",
+        quoteDate: q.quoteDate,
+        validUntil: q.validUntil,
+        currency: q.currency,
+        leadTime: q.deliveryLeadTime,
+        paymentTerms: q.paymentTerms,
+        subtotal: q.totalAmount ? Number(q.totalAmount) - Number(q.taxAmount || 0) : 0,
+        taxAmount: Number(q.taxAmount || 0),
+        totalAmount: Number(q.totalAmount || 0),
+        notes: q.notes,
+        totalScopeItemsRequired: totalScopeItems,
+        itemsQuotedCount: quotedCount,
+        hasMissingItems: missingItems.length > 0,
+        missingItemsComparedToOthers: missingItems,
+        scopeCoveragePercent:
+          totalScopeItems > 0 ? Math.round((quotedCount / totalScopeItems) * 100) : 100,
+        items: (q.quoteLines || []).map((l) => ({
+          partNumber: l.partNumber,
+          description: l.description,
+          quantity: l.quantity,
+          unit: l.unit,
+          price: Number(l.price),
+          totalPrice: Number(l.totalPrice || l.quantity * Number(l.price)),
+        })),
+      };
+    });
 
     const prompt = `You are a World-Class Chief Procurement Officer (CPO) and Strategic Sourcing Analyst.
 Perform an in-depth, executive-grade procurement analysis on the following supplier quotations.
 
 Provide strategic sourcing recommendations, item-level split-sourcing opportunities, contractual risks & hidden cost clauses, tactical negotiation leverage battlecards, and detailed supplier scorecards.
+
+CRITICAL PROCUREMENT SCOPE COMPLETENESS & SCORECARD DIRECTIVE:
+1. YOU MUST SCORE ALL ${quotes.length} SUPPLIER QUOTATIONS: The "supplierScores" array MUST contain EXACTLY ${quotes.length} scorecards — one distinct scorecard for every quotation listed below:
+${quotes.map((q, idx) => `   ${idx + 1}. Supplier: "${q.supplier?.name || "Supplier"}", Quote Number: "${q.quoteNumber}"`).join("\n")}
+   DO NOT omit, truncate, or combine any supplier from "supplierScores". Every single quote must receive its own scorecard.
+2. In the supplier's scorecard, you MUST include the "missingItems" array listing all omitted items (hasMissingItems=true or missingItemsComparedToOthers not empty).
+3. Incomplete item scope is a SEVERE FULFILLMENT RISK because an incomplete quotation's total price looks artificially low.
+4. You MUST heavily PENALIZE both overallScore (deduct 15-35 points based on missing ratio) and riskScore (drop to 40-60) for any quotation with missing items.
+5. You MUST state the missing items in the supplier's "weaknesses" list (e.g. "Incomplete scope: Missing Item X, Item Y").
+6. DO NOT recommend an incomplete quotation as the overall winner ("recommendedSupplierName") over a supplier that quoted the complete scope, unless split-sourcing explicitly covers the missing scope.
 
 Strictly return valid JSON following this schema:
 {
@@ -170,7 +206,7 @@ Strictly return valid JSON following this schema:
   "riskAnalysis": [
     {
       "level": "high" | "medium" | "low",
-      "title": "Short title of risk (e.g. Short Validity Window, Harsh Payment Terms, Freight Uninsured)",
+      "title": "Short title of risk (e.g. Incomplete Item Scope, Short Validity Window, Harsh Payment Terms)",
       "description": "Specific impact and risk explanation",
       "affectedSupplier": "Supplier Name"
     }
@@ -189,13 +225,16 @@ Strictly return valid JSON following this schema:
     {
       "supplierName": "Supplier Name",
       "quoteNumber": "Quote Number",
-      "overallScore": 85 (0-100),
+      "overallScore": 85 (0-100, heavily penalized if missing items),
       "priceScore": 90 (0-100),
       "deliveryScore": 80 (0-100),
       "termsScore": 85 (0-100),
-      "riskScore": 85 (0-100, higher means safer/lower risk),
+      "riskScore": 85 (0-100, heavily penalized if missing items),
+      "missingItems": ["Item Description 1", "Item Description 2"],
+      "missingItemsCount": 2,
+      "itemCoveragePercent": 66,
       "strengths": ["Key competitive advantage 1", "Key advantage 2"],
-      "weaknesses": ["Key weakness or gap 1"]
+      "weaknesses": ["Key weakness or gap 1", "Missing items: Item Description 1"]
     }
   ]
 }
@@ -290,33 +329,181 @@ ${JSON.stringify(quotesSummary, null, 2)}
             draftEmailSnippet: n.draftEmailSnippet ? String(n.draftEmailSnippet) : undefined,
           }))
         : [],
-      supplierScores: Array.isArray(parsed.supplierScores)
-        ? parsed.supplierScores.map((s: any) => ({
-            supplierName: String(s.supplierName || "Supplier"),
-            quoteNumber: String(s.quoteNumber || "Quote"),
-            overallScore: Math.min(100, Math.max(0, Number(s.overallScore) || 80)),
-            priceScore: Math.min(100, Math.max(0, Number(s.priceScore) || 80)),
-            deliveryScore: Math.min(100, Math.max(0, Number(s.deliveryScore) || 80)),
-            termsScore: Math.min(100, Math.max(0, Number(s.termsScore) || 80)),
-            riskScore: Math.min(100, Math.max(0, Number(s.riskScore) || 80)),
-            strengths: Array.isArray(s.strengths) ? s.strengths.map(String) : [],
-            weaknesses: Array.isArray(s.weaknesses) ? s.weaknesses.map(String) : [],
-          }))
-        : [],
+      supplierScores: (() => {
+        const rawAiScores = Array.isArray(parsed.supplierScores) ? parsed.supplierScores : [];
+        const aiScoreMap = new Map<string, any>();
+
+        rawAiScores.forEach((s: any) => {
+          const qNum = String(s.quoteNumber || "").trim().toLowerCase();
+          const sName = String(s.supplierName || "").trim().toLowerCase();
+          if (qNum) aiScoreMap.set(qNum, s);
+          if (sName && !aiScoreMap.has(sName)) aiScoreMap.set(sName, s);
+        });
+
+        // Compute baseline stats for score synthesizing in case AI omitted any quotes
+        const completeQuotes = quotes.filter((q) => {
+          const missing = quoteMissingMap.get(q.id) || [];
+          return missing.length === 0;
+        });
+        const candidatePool = completeQuotes.length > 0 ? completeQuotes : quotes;
+        const sortedByPrice = [...candidatePool].sort(
+          (a, b) => Number(a.totalAmount || 0) - Number(b.totalAmount || 0)
+        );
+        const baselineWinner = sortedByPrice[0] || quotes[0];
+        const allSorted = [...quotes].sort(
+          (a, b) => Number(a.totalAmount || 0) - Number(b.totalAmount || 0)
+        );
+        const highestBid = allSorted[allSorted.length - 1] || quotes[0];
+
+        // Ensure EVERY quotation has a scorecard
+        return quotes.map((q) => {
+          const qNum = (q.quoteNumber || "").trim().toLowerCase();
+          const sName = (q.supplier?.name || "").trim().toLowerCase();
+          const matched = aiScoreMap.get(qNum) || aiScoreMap.get(sName);
+
+          const missing =
+            quoteMissingMap.get(q.id) ||
+            quoteMissingMap.get(qNum) ||
+            quoteMissingMap.get(sName) ||
+            [];
+          const hasMissing = missing.length > 0 && totalScopeItems > 1;
+          const coverageRatio =
+            totalScopeItems > 0 ? (totalScopeItems - missing.length) / totalScopeItems : 1;
+          const scopePenalty = hasMissing ? Math.round((1 - coverageRatio) * 35) : 0;
+
+          if (matched) {
+            let rawOverall = Math.min(100, Math.max(0, Number(matched.overallScore) || 80));
+            let rawRisk = Math.min(100, Math.max(0, Number(matched.riskScore) || 80));
+            let rawPrice = Math.min(100, Math.max(0, Number(matched.priceScore) || 80));
+            let isPenalized = false;
+
+            if (hasMissing) {
+              rawOverall = Math.max(15, Math.min(rawOverall, 100 - scopePenalty));
+              rawRisk = Math.max(15, Math.min(rawRisk, 100 - scopePenalty));
+              rawPrice = Math.round(rawPrice * Math.min(1, coverageRatio + 0.15));
+              isPenalized = true;
+            }
+
+            const strengths = Array.isArray(matched.strengths) ? matched.strengths.map(String) : [];
+            const weaknesses = Array.isArray(matched.weaknesses) ? matched.weaknesses.map(String) : [];
+
+            if (hasMissing) {
+              if (!weaknesses.some((w: string) => w.toLowerCase().includes("missing") || w.toLowerCase().includes("incomplete"))) {
+                weaknesses.unshift(
+                  `Incomplete scope: Missing ${missing.length} item(s) (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "..." : ""})`
+                );
+              }
+            } else if (totalScopeItems > 1 && !strengths.some((st: string) => st.toLowerCase().includes("complete"))) {
+              strengths.unshift(
+                `100% Complete item scope (${totalScopeItems}/${totalScopeItems} items quoted)`
+              );
+            }
+
+            return {
+              supplierName: q.supplier?.name || String(matched.supplierName || "Supplier"),
+              quoteNumber: q.quoteNumber || String(matched.quoteNumber || "Quote"),
+              overallScore: rawOverall,
+              priceScore: rawPrice,
+              deliveryScore: Math.min(100, Math.max(0, Number(matched.deliveryScore) || 80)),
+              termsScore: Math.min(100, Math.max(0, Number(matched.termsScore) || 80)),
+              riskScore: rawRisk,
+              strengths,
+              weaknesses,
+              missingItems: missing,
+              missingItemsCount: missing.length,
+              totalScopeItemsCount: totalScopeItems,
+              itemCoveragePercent: totalScopeItems > 0 ? Math.round(coverageRatio * 100) : 100,
+              scopePenalized: isPenalized,
+            };
+          }
+
+          // Fallback scorecard generation if AI omitted this specific quotation from supplierScores
+          const totalAmount = Number(q.totalAmount || 0);
+          const rawPriceScore = Math.max(
+            40,
+            Math.round(
+              100 -
+                ((totalAmount - Number(baselineWinner.totalAmount || 0)) /
+                  Number(highestBid.totalAmount || 1)) *
+                  40
+            )
+          );
+          const priceScore = hasMissing
+            ? Math.round(rawPriceScore * Math.min(1, coverageRatio + 0.15))
+            : rawPriceScore;
+          const deliveryScore = 85;
+          const terms = (q.paymentTerms || "").toLowerCase();
+          const termsScore = terms.includes("net 30") || terms.includes("net 45") ? 90 : 70;
+          const riskScore = Math.max(
+            20,
+            (terms.includes("immediate") ? 65 : 85) - (hasMissing ? 25 : 0)
+          );
+          const rawOverall = Math.round(
+            priceScore * 0.45 + deliveryScore * 0.25 + termsScore * 0.15 + riskScore * 0.15
+          );
+          const overallScore = Math.max(15, Math.min(100, rawOverall - scopePenalty));
+
+          const strengths: string[] = [];
+          if (!hasMissing && totalScopeItems > 1) {
+            strengths.push(`Complete item scope (${totalScopeItems}/${totalScopeItems} items quoted)`);
+          } else {
+            strengths.push("Competitive initial line pricing");
+          }
+
+          const weaknesses: string[] = [];
+          if (hasMissing) {
+            weaknesses.push(`Missing ${missing.length} item(s): ${missing.slice(0, 3).join(", ")}`);
+          }
+
+          return {
+            supplierName: q.supplier?.name || "Supplier",
+            quoteNumber: q.quoteNumber,
+            overallScore,
+            priceScore,
+            deliveryScore,
+            termsScore,
+            riskScore,
+            strengths,
+            weaknesses,
+            missingItems: missing,
+            missingItemsCount: missing.length,
+            totalScopeItemsCount: totalScopeItems,
+            itemCoveragePercent: Math.round(coverageRatio * 100),
+            scopePenalized: hasMissing,
+          };
+        });
+      })(),
       analyzedQuotesCount: quotes.length,
       generatedAt: new Date().toISOString(),
     };
   }
 
   private runHeuristicAnalysis(quotes: SupplierQuoteEntity[]): IntelligentAnalysisResult {
-    const sortedByPrice = [...quotes].sort(
+    const { totalScopeItems, quoteMissingMap } = extractCrossQuoteItemScope(quotes);
+
+    // Identify complete quotes vs incomplete quotes
+    const completeQuotes = quotes.filter((q) => {
+      const missing = quoteMissingMap.get(q.id) || [];
+      return missing.length === 0;
+    });
+
+    // When sorting for recommended baseline, prefer complete quotes if any exist
+    const candidatePool = completeQuotes.length > 0 ? completeQuotes : quotes;
+    const sortedByPrice = [...candidatePool].sort(
       (a, b) => Number(a.totalAmount || 0) - Number(b.totalAmount || 0)
     );
-    const cheapest = sortedByPrice[0];
-    const highest = sortedByPrice[sortedByPrice.length - 1];
+    const recommendedWinner = sortedByPrice[0];
 
-    const projectedSavings =
-      Number(highest.totalAmount || 0) - Number(cheapest.totalAmount || 0);
+    const allSorted = [...quotes].sort(
+      (a, b) => Number(a.totalAmount || 0) - Number(b.totalAmount || 0)
+    );
+    const absoluteLowest = allSorted[0];
+    const highest = allSorted[allSorted.length - 1];
+
+    const projectedSavings = Math.max(
+      0,
+      Number(highest.totalAmount || 0) - Number(recommendedWinner.totalAmount || 0)
+    );
 
     const riskAnalysis: RiskItem[] = [];
     const negotiationPoints: NegotiationLeveragePoint[] = [];
@@ -326,7 +513,25 @@ ${JSON.stringify(quotesSummary, null, 2)}
     quotes.forEach((q) => {
       const supplierName = q.supplier?.name || "Supplier";
       const totalAmount = Number(q.totalAmount || 0);
-      const isCheapest = q.id === cheapest.id;
+      const isWinner = q.id === recommendedWinner.id;
+      const isAbsoluteLowest = q.id === absoluteLowest.id;
+      const missing = quoteMissingMap.get(q.id) || [];
+      const hasMissing = missing.length > 0 && totalScopeItems > 1;
+      const coverageRatio =
+        totalScopeItems > 0
+          ? (totalScopeItems - missing.length) / totalScopeItems
+          : 1;
+      const scopePenalty = hasMissing ? Math.round((1 - coverageRatio) * 35) : 0;
+
+      // Check for missing items scope risk
+      if (hasMissing) {
+        riskAnalysis.push({
+          level: "high",
+          title: "Incomplete Line-Item Scope",
+          description: `${supplierName} omitted ${missing.length} item(s) (${missing.join(", ")}). Their quote does not satisfy the complete project scope and requires secondary procurement.`,
+          affectedSupplier: supplierName,
+        });
+      }
 
       // Check payment terms risk
       const terms = (q.paymentTerms || "").toLowerCase();
@@ -353,23 +558,62 @@ ${JSON.stringify(quotesSummary, null, 2)}
       }
 
       // Negotiation point
-      if (!isCheapest && projectedSavings > 0) {
+      if (!isWinner && projectedSavings > 0) {
         negotiationPoints.push({
           supplierName,
           quoteNumber: q.quoteNumber,
-          leveragePoint: `Price is higher than lowest benchmark by ${formatCurrency(totalAmount - Number(cheapest.totalAmount || 0))}`,
+          leveragePoint: `Price is higher than lowest qualified benchmark by ${formatCurrency(totalAmount - Number(recommendedWinner.totalAmount || 0))}`,
           recommendedAction: `Ask ${supplierName} for a competitive volume discount to match the lead bid.`,
-          potentialImpact: `Potential price reduction of up to ${formatCurrency(totalAmount - Number(cheapest.totalAmount || 0))}.`,
+          potentialImpact: `Potential price reduction of up to ${formatCurrency(totalAmount - Number(recommendedWinner.totalAmount || 0))}.`,
           draftEmailSnippet: `We have reviewed quotation ${q.quoteNumber}. While we appreciate your proposal, your quote is currently above alternative qualified vendors. Could you offer an improved volume rate?`,
         });
       }
 
-      // Scorecard
-      const priceScore = Math.max(50, Math.round(100 - ((totalAmount - Number(cheapest.totalAmount || 0)) / (Number(highest.totalAmount || 1))) * 40));
+      // Scorecard calculation with scope completeness penalty
+      const rawPriceScore = Math.max(
+        40,
+        Math.round(
+          100 -
+            ((totalAmount - Number(recommendedWinner.totalAmount || 0)) /
+              Number(highest.totalAmount || 1)) *
+              40
+        )
+      );
+      const priceScore = hasMissing
+        ? Math.round(rawPriceScore * Math.min(1, coverageRatio + 0.15))
+        : rawPriceScore;
       const deliveryScore = 85;
       const termsScore = terms.includes("net 30") || terms.includes("net 45") ? 90 : 70;
-      const riskScore = terms.includes("immediate") ? 65 : 85;
-      const overallScore = Math.round((priceScore * 0.45) + (deliveryScore * 0.25) + (termsScore * 0.15) + (riskScore * 0.15));
+      const riskScore = Math.max(
+        20,
+        (terms.includes("immediate") ? 65 : 85) - (hasMissing ? 25 : 0)
+      );
+      const rawOverall = Math.round(
+        priceScore * 0.45 + deliveryScore * 0.25 + termsScore * 0.15 + riskScore * 0.15
+      );
+      const overallScore = Math.max(15, Math.min(100, rawOverall - scopePenalty));
+
+      const strengths: string[] = [];
+      if (!hasMissing && totalScopeItems > 1) {
+        strengths.push(`Complete item scope (${totalScopeItems}/${totalScopeItems} items quoted)`);
+      }
+      if (isWinner) {
+        strengths.push("Lowest total cost bid for complete scope", "Optimal price-to-terms balance");
+      } else if (isAbsoluteLowest) {
+        strengths.push("Lowest unit prices on quoted items");
+      } else {
+        strengths.push("Established supplier profile");
+      }
+
+      const weaknesses: string[] = [];
+      if (hasMissing) {
+        weaknesses.push(
+          `Missing ${missing.length} item(s): ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "..." : ""}`
+        );
+      }
+      if (!isWinner && !isAbsoluteLowest) {
+        weaknesses.push("Priced above market benchmark");
+      }
 
       supplierScores.push({
         supplierName,
@@ -379,18 +623,28 @@ ${JSON.stringify(quotesSummary, null, 2)}
         deliveryScore,
         termsScore,
         riskScore,
-        strengths: isCheapest ? ["Lowest total cost bid", "High cost-efficiency"] : ["Comprehensive specification match"],
-        weaknesses: !isCheapest ? ["Priced above market benchmark"] : [],
+        strengths,
+        weaknesses,
+        missingItems: missing,
+        missingItemsCount: missing.length,
+        totalScopeItemsCount: totalScopeItems,
+        itemCoveragePercent: Math.round(coverageRatio * 100),
+        scopePenalized: hasMissing,
       });
     });
 
+    const recommendationReason =
+      completeQuotes.length > 0 && absoluteLowest.id !== recommendedWinner.id
+        ? `${recommendedWinner.supplier?.name || "Recommended vendor"} provides 100% complete line-item scope at the lowest cost of ${formatCurrency(Number(recommendedWinner.totalAmount || 0))}. (Note: ${absoluteLowest.supplier?.name || "Alternative vendor"} had a lower subtotal but omitted items from scope).`
+        : `Delivers the lowest overall procurement expenditure of ${formatCurrency(Number(recommendedWinner.totalAmount || 0))} with standard commercial compliance.`;
+
     return {
-      summary: `Analyzed ${quotes.length} quotations. ${cheapest.supplier?.name || "The leading vendor"} presents the most cost-effective solution with total projected savings of ${formatCurrency(projectedSavings)}.`,
-      recommendedSupplierName: cheapest.supplier?.name || "Supplier",
-      recommendationReason: `Delivers the lowest overall procurement expenditure of ${formatCurrency(Number(cheapest.totalAmount || 0))} with standard commercial compliance.`,
+      summary: `Analyzed ${quotes.length} quotations across ${totalScopeItems} required scope items. ${recommendedWinner.supplier?.name || "The leading vendor"} presents the most cost-effective complete solution with total projected savings of ${formatCurrency(projectedSavings)}.`,
+      recommendedSupplierName: recommendedWinner.supplier?.name || "Supplier",
+      recommendationReason,
       projectedSavings,
       strategicActionPlan: [
-        `Confirm order allocation with ${cheapest.supplier?.name || "recommended vendor"} before validity expiration`,
+        `Confirm order allocation with ${recommendedWinner.supplier?.name || "recommended vendor"} before validity expiration`,
         "Request formal payment terms confirmation (Net-30 days)",
         "Lock in delivery milestones against agreed purchase order",
       ],
@@ -411,4 +665,52 @@ ${JSON.stringify(quotesSummary, null, 2)}
 
 function formatCurrency(val: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+}
+
+interface CrossQuoteScope {
+  masterItemMap: Map<string, string>;
+  totalScopeItems: number;
+  quoteMissingMap: Map<string, string[]>;
+}
+
+function extractCrossQuoteItemScope(quotes: SupplierQuoteEntity[]): CrossQuoteScope {
+  const masterItemMap = new Map<string, string>(); // normalizedKey -> best description
+  quotes.forEach((q) => {
+    (q.quoteLines || []).forEach((line) => {
+      const desc = line.description?.trim() || "";
+      const part = line.partNumber?.trim() || "";
+      const normalizedKey = (part || desc).toLowerCase();
+      if (normalizedKey && !masterItemMap.has(normalizedKey)) {
+        masterItemMap.set(normalizedKey, desc || part || "Line Item");
+      }
+    });
+  });
+
+  const totalScopeItems = masterItemMap.size;
+  const quoteMissingMap = new Map<string, string[]>();
+
+  quotes.forEach((q) => {
+    const presentKeys = new Set(
+      (q.quoteLines || []).map((l) =>
+        (l.partNumber?.trim() || l.description?.trim() || "").toLowerCase()
+      )
+    );
+    const missing: string[] = [];
+    if (totalScopeItems > 0 && quotes.length > 1) {
+      masterItemMap.forEach((title, key) => {
+        if (!presentKeys.has(key)) {
+          missing.push(title);
+        }
+      });
+    }
+    quoteMissingMap.set(q.id, missing);
+    if (q.quoteNumber) {
+      quoteMissingMap.set(q.quoteNumber.toLowerCase(), missing);
+    }
+    if (q.supplier?.name) {
+      quoteMissingMap.set(q.supplier.name.toLowerCase(), missing);
+    }
+  });
+
+  return { masterItemMap, totalScopeItems, quoteMissingMap };
 }

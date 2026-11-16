@@ -122,6 +122,19 @@ export class QuoteRepository {
     return quotes.map((q: any) => this.mapQuoteEntity(q));
   }
 
+  async findByIds(ids: string[]): Promise<SupplierQuoteEntity[]> {
+    if (!ids || ids.length === 0) return [];
+    const quotes = await db.supplierQuote.findMany({
+      where: { id: { in: ids } },
+      include: {
+        supplier: true,
+        quoteLines: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return quotes.map((q: any) => this.mapQuoteEntity(q));
+  }
+
   async findById(id: string, organizationId: string): Promise<SupplierQuoteEntity | null> {
     const quote = await db.supplierQuote.findFirst({
       where: { id, organizationId },

@@ -4,6 +4,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { env } from "./infrastructure/config/env.config";
 import { apiRoutes } from "./presentation/routes";
+import { generalRateLimiter } from "./presentation/middlewares/rate-limit.middleware";
 import { errorHandler } from "./presentation/middlewares/error.middleware";
 import { notFoundHandler } from "./presentation/middlewares/not-found.middleware";
 
@@ -22,8 +23,8 @@ export function createApp(): Application {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // API Routes
-  app.use("/api/v1", apiRoutes);
+  // API Routes with global rate limiting (300 req / 15 min)
+  app.use("/api/v1", generalRateLimiter, apiRoutes);
 
   // Error handling middlewares
   app.use(notFoundHandler);

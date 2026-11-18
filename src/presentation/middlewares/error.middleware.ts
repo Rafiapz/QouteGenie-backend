@@ -5,6 +5,7 @@ import {
   ValidationError,
   ConflictError,
   UnauthorizedError,
+  PlanLimitError,
 } from "../../domain/errors/domain.error";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
@@ -59,6 +60,15 @@ export function errorHandler(
   // 5. Domain Unauthorized Error
   if (err instanceof UnauthorizedError) {
     res.status(401).json({
+      success: false,
+      error: err.message,
+    });
+    return;
+  }
+
+  // 6. Domain Plan Limit Error (HTTP 403 Forbidden)
+  if (err instanceof PlanLimitError) {
+    res.status(403).json({
       success: false,
       error: err.message,
     });

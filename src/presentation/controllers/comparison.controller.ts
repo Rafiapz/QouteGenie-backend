@@ -11,9 +11,11 @@ export class ComparisonController {
         throw new UnauthorizedError("Authentication required.");
       }
 
+      const userPlan = req.user?.plan ?? 1;
       const comparison = await this.comparisonUseCase.createComparison(
         req.user.organizationId,
-        req.body
+        req.body,
+        userPlan
       );
 
       res.status(201).json({
@@ -75,10 +77,12 @@ export class ComparisonController {
       }
 
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const userPlan = req.user?.plan ?? 1;
       const updated = await this.comparisonUseCase.updateComparison(
         id,
         req.user.organizationId,
-        req.body
+        req.body,
+        userPlan
       );
 
       res.status(200).json({
@@ -119,11 +123,13 @@ export class ComparisonController {
       const forceRefresh = Boolean(req.body.forceRefresh);
       const quoteIds = Array.isArray(req.body.quoteIds) ? req.body.quoteIds : undefined;
 
+      const userPlan = req.user?.plan ?? 1;
       const analysis = await this.comparisonUseCase.analyzeComparison(
         id,
         req.user.organizationId,
         forceRefresh,
-        quoteIds
+        quoteIds,
+        userPlan
       );
 
       res.status(200).json({

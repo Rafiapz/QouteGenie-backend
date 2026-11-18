@@ -4,7 +4,7 @@ import { QuoteAiAnalyzerService } from "../../../infrastructure/services/quote-a
 import { QuoteComparisonEntity } from "../../../domain/entities/comparison.entity";
 import { IntelligentAnalysisResult } from "../../../domain/entities/quote-analysis.entity";
 import { CreateComparisonDto, UpdateComparisonDto } from "../../dtos/comparison.dto";
-import { NotFoundError, ValidationError } from "../../../domain/errors/domain.error";
+import { NotFoundError, ValidationError, PlanLimitError } from "../../../domain/errors/domain.error";
 import { redisClient } from "../../../infrastructure/cache/redis.client";
 
 export class ComparisonUseCase {
@@ -16,10 +16,30 @@ export class ComparisonUseCase {
 
   async createComparison(
     organizationId: string,
-    dto: CreateComparisonDto
+    dto: CreateComparisonDto,
+    userPlan: number = 1
   ): Promise<QuoteComparisonEntity> {
     if (!dto.quoteIds || dto.quoteIds.length === 0) {
       throw new ValidationError("At least one quote ID must be specified for comparison.");
+    }
+
+    // Free plan limits:
+    // 1. Can compare up to 3 quotations in each comparison
+    // 2. Can create a maximum of 3 comparisons
+    const isFreePlan = (userPlan ?? 1) === 1;
+    if (isFreePlan) {
+      if (dto.quoteIds.length > 3) {
+        throw new PlanLimitError(
+          "Free plan limit exceeded: You can only compare up to 3 quotations at a time on the Free plan. Please upgrade to compare more quotations."
+        );
+      }
+
+      const existingComparisons = await this.comparisonRepository.findAllByOrganization(organizationId);
+      if (existingComparisons.length >= 3) {
+        throw new PlanLimitError(
+          "Free plan limit reached: You can create a maximum of 3 comparisons on the Free plan. Please upgrade to unlock unlimited comparisons."
+        );
+      }
     }
 
     const name = dto.name?.trim() || `Comparison (${new Date().toLocaleDateString()})`;
@@ -47,8 +67,16 @@ export class ComparisonUseCase {
   async updateComparison(
     id: string,
     organizationId: string,
-    dto: UpdateComparisonDto
+    dto: UpdateComparisonDto,
+    userPlan: number = 1
   ): Promise<QuoteComparisonEntity> {
+    const isFreePlan = (userPlan ?? 1) === 1;
+    if (isFreePlan && dto.quoteIds && dto.quoteIds.length > 3) {
+      throw new PlanLimitError(
+        "Free plan limit exceeded: You can only compare up to 3 quotations at a time on the Free plan. Please upgrade your plan to compare more quotations."
+      );
+    }
+
     const updated = await this.comparisonRepository.update(id, organizationId, {
       name: dto.name?.trim(),
       description: dto.description?.trim(),
@@ -114,7 +142,8 @@ export class ComparisonUseCase {
     id: string,
     organizationId: string,
     forceRefresh: boolean = false,
-    clientQuoteIds?: string[]
+    clientQuoteIds?: string[],
+    userPlan: number = 1
   ): Promise<IntelligentAnalysisResult> {
     const comparison = await this.getComparisonById(id, organizationId);
     const targetQuoteIds = (clientQuoteIds && clientQuoteIds.length > 0)
@@ -123,6 +152,13 @@ export class ComparisonUseCase {
 
     if (!targetQuoteIds || targetQuoteIds.length === 0) {
       throw new ValidationError("This comparison does not contain any quotations.");
+    }
+
+    const isFreePlan = (userPlan ?? 1) === 1;
+    if (isFreePlan && targetQuoteIds.length > 3) {
+      throw new PlanLimitError(
+        "Free plan limit exceeded: You can only compare up to 3 quotations at a time on the Free plan. Please upgrade your plan to compare more quotations."
+      );
     }
 
     const allQuotes = await this.quoteRepository.findByOrganizationId(organizationId);

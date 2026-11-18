@@ -4,6 +4,7 @@ import {
   SupplierQuoteEntity,
   QuoteLineEntity,
   UploadedFileEntity,
+  QuoteFilterOptions,
 } from "../../domain/entities/quote.entity";
 
 // Safe accessor that types delegates even if TS server cached stale definitions
@@ -109,17 +110,75 @@ export class QuoteRepository {
     return this.mapQuoteEntity(quote);
   }
 
-  async findByOrganizationId(organizationId: string): Promise<SupplierQuoteEntity[]> {
+  async findByOrganizationId(
+    organizationId: string,
+    filters?: QuoteFilterOptions
+  ): Promise<SupplierQuoteEntity[]> {
+    const where: any = { organizationId };
+
+    if (filters?.supplier && filters.supplier !== "all") {
+      where.supplier = {
+        name: {
+          equals: filters.supplier,
+          mode: "insensitive",
+        },
+      };
+    }
+
+    if (filters?.search && filters.search.trim()) {
+      const q = filters.search.trim();
+      where.OR = [
+        { quoteNumber: { contains: q, mode: "insensitive" } },
+        { supplier: { name: { contains: q, mode: "insensitive" } } },
+        {
+          quoteLines: {
+            some: {
+              OR: [
+                { description: { contains: q, mode: "insensitive" } },
+                { partNumber: { contains: q, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    // Determine orderBy
+    let orderBy: any = { createdAt: "desc" };
+    if (filters?.sortBy === "amount_asc") {
+      orderBy = { totalAmount: "asc" };
+    } else if (filters?.sortBy === "amount_desc") {
+      orderBy = { totalAmount: "desc" };
+    } else if (filters?.sortBy === "items") {
+      orderBy = { quoteLines: { _count: "desc" } };
+    } else if (filters?.sortBy === "date") {
+      orderBy = { createdAt: "desc" };
+    }
+
     const quotes = await db.supplierQuote.findMany({
-      where: { organizationId },
+      where,
       include: {
         supplier: true,
         quoteLines: true,
       },
-      orderBy: { createdAt: "desc" },
+      orderBy,
     });
 
-    return quotes.map((q: any) => this.mapQuoteEntity(q));
+    const mapped: SupplierQuoteEntity[] = quotes.map((q: any) => this.mapQuoteEntity(q));
+
+    // Handle delivery turnaround sorting if requested
+    if (filters?.sortBy === "delivery") {
+      mapped.sort((a, b) => {
+        const getDays = (str?: string | null) => {
+          if (!str) return 999;
+          const match = str.match(/(\d+)/);
+          return match ? parseInt(match[1], 10) : 999;
+        };
+        return getDays(a.deliveryLeadTime) - getDays(b.deliveryLeadTime);
+      });
+    }
+
+    return mapped;
   }
 
   async findByIds(ids: string[]): Promise<SupplierQuoteEntity[]> {
@@ -159,6 +218,12 @@ export class QuoteRepository {
 
     if (!quote) return null;
     return this.mapQuoteEntity(quote);
+  }
+
+  async countQuotes(organizationId: string): Promise<number> {
+    return await db.supplierQuote.count({
+      where: { organizationId },
+    });
   }
 
   async deleteQuote(id: string, organizationId: string): Promise<boolean> {

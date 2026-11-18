@@ -102,7 +102,7 @@ Strict JSON format requirements:
   "quoteNumber": "string (the quotation, estimate, or invoice reference number)",
   "quoteDate": "YYYY-MM-DD",
   "validUntil": "YYYY-MM-DD (expiry or validity date, or 30 days after quoteDate if unspecified)",
-  "currency": "INR, USD, EUR, GBP, etc. (3-letter currency code)",
+  "currency": "INR",
   "deliveryLeadTime": "string (e.g. '3 weeks from PO', '5-7 business days')",
   "paymentTerms": "string (e.g. 'Net 30 days', 'Immediate upon receipt')",
   "supplier": {
@@ -197,7 +197,7 @@ ${text.slice(0, 15000)}
       quoteDate: parsed.quoteDate ? this.normalizeDate(parsed.quoteDate) : new Date().toISOString().split("T")[0],
       validUntil: parsed.validUntil ? this.normalizeDate(parsed.validUntil) : this.getDefaultValidityDate(),
       status: 0,
-      currency: String(parsed.currency || "INR").toUpperCase(),
+      currency: "INR",
       deliveryLeadTime: String(parsed.deliveryLeadTime || "5-7 business days"),
       paymentTerms: String(parsed.paymentTerms || "Net 30"),
       supplier: {
@@ -248,20 +248,8 @@ ${text.slice(0, 15000)}
       ? this.normalizeDate(validUntilMatch[1])
       : this.getDefaultValidityDate();
 
-    // 3. Currency Detection
+    // 3. Currency Detection: Standardize to INR (Indian Rupees)
     let currency = "INR";
-    const currCodeMatch = text.match(/\b(INR|USD|EUR|GBP|AUD|CAD|CHF|JPY|SGD)\b/i);
-    if (currCodeMatch) {
-      currency = currCodeMatch[1].toUpperCase();
-    } else if (text.includes("USD") || text.includes("$")) {
-      currency = "USD";
-    } else if (text.includes("EUR") || text.includes("€")) {
-      currency = "EUR";
-    } else if (text.includes("GBP") || text.includes("£")) {
-      currency = "GBP";
-    } else if (text.includes("₹")) {
-      currency = "INR";
-    }
 
     // 4. Delivery Lead Time
     const leadTimeMatch =

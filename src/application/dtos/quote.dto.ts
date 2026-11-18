@@ -26,3 +26,10 @@ export const SaveQuoteSchema = z.object({
 });
 
 export type SaveQuoteDto = z.infer<typeof SaveQuoteSchema>;
+
+export const AnalyzeQuotesSchema = z.object({
+  quoteIds: z.array(z.string()).optional(),
+  forceRefresh: z.boolean().optional(),
+});
+
+export type AnalyzeQuotesDto = z.infer<typeof AnalyzeQuotesSchema>;

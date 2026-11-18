@@ -20,7 +20,8 @@ export class QuoteController {
         req.file.originalname,
         req.file.mimetype,
         req.file.size,
-        req.user.organizationId
+        req.user.organizationId,
+        req.user.plan
       );
 
       res.status(200).json({
@@ -41,7 +42,8 @@ export class QuoteController {
 
       const saved = await this.quoteUseCase.saveQuote(
         req.body,
-        req.user.organizationId
+        req.user.organizationId,
+        req.user.plan
       );
 
       res.status(201).json({
@@ -60,7 +62,13 @@ export class QuoteController {
         throw new UnauthorizedError("Authentication required.");
       }
 
-      const quotes = await this.quoteUseCase.getQuotes(req.user.organizationId);
+      const { search, supplier, sortBy } = req.query;
+
+      const quotes = await this.quoteUseCase.getQuotes(req.user.organizationId, {
+        search: typeof search === "string" ? search : undefined,
+        supplier: typeof supplier === "string" ? supplier : undefined,
+        sortBy: typeof sortBy === "string" ? (sortBy as any) : undefined,
+      });
 
       res.status(200).json({
         success: true,

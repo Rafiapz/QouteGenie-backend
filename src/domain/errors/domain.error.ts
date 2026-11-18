@@ -32,3 +32,10 @@ export class UnauthorizedError extends DomainError {
     this.name = "UnauthorizedError";
   }
 }
+
+export class PlanLimitError extends DomainError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PlanLimitError";
+  }
+}

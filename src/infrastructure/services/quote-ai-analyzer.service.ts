@@ -139,7 +139,7 @@ export class QuoteAiAnalyzerService {
         supplierName: q.supplier?.name || "Supplier",
         quoteDate: q.quoteDate,
         validUntil: q.validUntil,
-        currency: q.currency,
+        currency: "INR",
         leadTime: q.deliveryLeadTime,
         paymentTerms: q.paymentTerms,
         subtotal: q.totalAmount ? Number(q.totalAmount) - Number(q.taxAmount || 0) : 0,
@@ -169,6 +169,7 @@ Perform an in-depth, executive-grade procurement analysis on the following suppl
 Provide strategic sourcing recommendations, item-level split-sourcing opportunities, contractual risks & hidden cost clauses, tactical negotiation leverage battlecards, and detailed supplier scorecards.
 
 CRITICAL PROCUREMENT SCOPE COMPLETENESS & SCORECARD DIRECTIVE:
+0. STRICT CURRENCY MANDATE: ALL prices, monetary amounts, baseline figures, and projected savings MUST be stated exclusively in Indian Rupees (₹ / INR). NEVER use $, USD, EUR, GBP, or other currencies anywhere in summary, recommendationReason, allocations, or text.
 1. YOU MUST SCORE ALL ${quotes.length} SUPPLIER QUOTATIONS: The "supplierScores" array MUST contain EXACTLY ${quotes.length} scorecards — one distinct scorecard for every quotation listed below:
 ${quotes.map((q, idx) => `   ${idx + 1}. Supplier: "${q.supplier?.name || "Supplier"}", Quote Number: "${q.quoteNumber}"`).join("\n")}
    DO NOT omit, truncate, or combine any supplier from "supplierScores". Every single quote must receive its own scorecard.
@@ -664,7 +665,7 @@ ${JSON.stringify(quotesSummary, null, 2)}
 }
 
 function formatCurrency(val: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(val);
 }
 
 interface CrossQuoteScope {

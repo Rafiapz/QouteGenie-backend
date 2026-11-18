@@ -60,6 +60,12 @@ export interface SupplierQuoteEntity {
   quoteLines?: QuoteLineEntity[];
 }
 
+export interface QuoteFilterOptions {
+  search?: string;
+  supplier?: string;
+  sortBy?: "date" | "amount_asc" | "amount_desc" | "delivery" | "items";
+}
+
 export interface QuoteLineEntity {
   id: string;
   quoteId: string;

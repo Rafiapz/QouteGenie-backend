@@ -9,7 +9,7 @@ import { authenticate } from "../middlewares/auth.middleware";
 import { uploadQuotePdf } from "../middlewares/upload.middleware";
 import { validateRequest } from "../middlewares/validate.middleware";
 import { aiAnalysisRateLimiter } from "../middlewares/rate-limit.middleware";
-import { SaveQuoteSchema } from "../../application/dtos/quote.dto";
+import { SaveQuoteSchema, AnalyzeQuotesSchema } from "../../application/dtos/quote.dto";
 
 const router = Router();
 
@@ -33,7 +33,7 @@ router.use(authenticate);
 router.post("/extract", aiAnalysisRateLimiter, uploadQuotePdf.single("file"), quoteController.extract);
 
 // POST /api/v1/quotes/analyze - Intelligent AI Quotation Analysis & Strategic Sourcing (Rate limited: 20 req / min)
-router.post("/analyze", aiAnalysisRateLimiter, quoteController.analyze);
+router.post("/analyze", aiAnalysisRateLimiter, validateRequest({ body: AnalyzeQuotesSchema }), quoteController.analyze);
 
 // POST /api/v1/quotes - Save verified quotation
 router.post("/", validateRequest({ body: SaveQuoteSchema }), quoteController.save);

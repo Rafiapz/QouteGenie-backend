@@ -2,10 +2,14 @@ import { PdfExtractorService } from "../../../infrastructure/services/pdf-extrac
 import { QuoteAiAnalyzerService } from "../../../infrastructure/services/quote-ai-analyzer.service";
 import { QuoteRepository } from "../../../infrastructure/repositories/quote.repository";
 import { SupplierRepository } from "../../../infrastructure/repositories/supplier.repository";
-import { ExtractedQuoteData, SupplierQuoteEntity } from "../../../domain/entities/quote.entity";
+import {
+  ExtractedQuoteData,
+  SupplierQuoteEntity,
+  QuoteFilterOptions,
+} from "../../../domain/entities/quote.entity";
 import { IntelligentAnalysisResult } from "../../../domain/entities/quote-analysis.entity";
 import { SaveQuoteDto } from "../../dtos/quote.dto";
-import { ConflictError, NotFoundError } from "../../../domain/errors/domain.error";
+import { ConflictError, NotFoundError, PlanLimitError } from "../../../domain/errors/domain.error";
 
 export class QuoteUseCase {
   constructor(
@@ -20,8 +24,20 @@ export class QuoteUseCase {
     originalFileName: string,
     mimeType: string,
     fileSize: number,
-    organizationId: string
+    organizationId: string,
+    userPlan?: number
   ): Promise<ExtractedQuoteData> {
+    // Check Free Plan limit: max 4 quotations
+    const plan = userPlan ?? 1;
+    if (plan === 1) {
+      const quoteCount = await this.quoteRepository.countQuotes(organizationId);
+      if (quoteCount >= 4) {
+        throw new PlanLimitError(
+          "Free Plan Limit Reached: You can upload a maximum of 4 quotations on the Free plan. Please upgrade your plan or remove an existing quotation to upload more."
+        );
+      }
+    }
+
     // 1. Extract raw data and tables from PDF
     const extracted = await this.pdfExtractorService.extractFromPdf(filePath, originalFileName);
 
@@ -55,8 +71,20 @@ export class QuoteUseCase {
 
   async saveQuote(
     data: SaveQuoteDto,
-    organizationId: string
+    organizationId: string,
+    userPlan?: number
   ): Promise<SupplierQuoteEntity> {
+    // Check Free Plan limit: max 4 quotations
+    const plan = userPlan ?? 1;
+    if (plan === 1) {
+      const quoteCount = await this.quoteRepository.countQuotes(organizationId);
+      if (quoteCount >= 4) {
+        throw new PlanLimitError(
+          "Free Plan Limit Reached: You can store a maximum of 4 quotations on the Free plan. Please upgrade your plan or remove an existing quotation to upload more."
+        );
+      }
+    }
+
     // 1. Check if quotation with same quoteNumber already exists in organization
     const existingQuote = await this.quoteRepository.findByQuoteNumber(
       data.quoteNumber,
@@ -111,8 +139,11 @@ export class QuoteUseCase {
     return savedQuote;
   }
 
-  async getQuotes(organizationId: string): Promise<SupplierQuoteEntity[]> {
-    return this.quoteRepository.findByOrganizationId(organizationId);
+  async getQuotes(
+    organizationId: string,
+    filters?: QuoteFilterOptions
+  ): Promise<SupplierQuoteEntity[]> {
+    return this.quoteRepository.findByOrganizationId(organizationId, filters);
   }
 
   async getQuoteById(id: string, organizationId: string): Promise<SupplierQuoteEntity> {
